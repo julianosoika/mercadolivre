@@ -45,23 +45,23 @@ def buscar_ofertas_mercadolivre():
         except Exception as e:
             print(f"⚠️ Erro ao procurar no RSS ({url}): {e}", flush=True)
 
-    # Se o RSS falhar, utiliza URLs de busca funcionais
+    # Se o RSS falhar, utiliza URLs diretas completas que geram o Link Preview com foto
     if not ofertas:
-        print("⚠️ Utilizando lista garantida de ofertas populares...", flush=True)
+        print("⚠️ Utilizando lista garantida de ofertas populares com Link Preview...", flush=True)
         ofertas = [
             {
-                'titulo': 'Smartphone Samsung Galaxy A54 5G 128GB',
-                'link': 'https://lista.mercadolivre.com.br/samsung-galaxy-a54',
+                'titulo': 'Smartphone Samsung Galaxy A54 5G 128GB Preto 8GB RAM',
+                'link': 'https://www.mercadolivre.com.br/samsung-galaxy-a54-5g-128gb-preto-8gb-ram/p/MLB23138593',
                 'preco': '1.699,00'
             },
             {
                 'titulo': 'Fone de Ouvido Bluetooth JBL Wave Flex',
-                'link': 'https://lista.mercadolivre.com.br/jbl-wave-flex',
+                'link': 'https://www.mercadolivre.com.br/fone-de-ouvido-sem-fio-jbl-wave-flex-preto/p/MLB22851412',
                 'preco': '249,00'
             },
             {
-                'titulo': 'Smart TV 50 4K UHD LED LG',
-                'link': 'https://lista.mercadolivre.com.br/smart-tv-50-4k-lg',
+                'titulo': 'Smart TV 50 4K UHD LED LG 50UT8050',
+                'link': 'https://www.mercadolivre.com.br/smart-tv-50-4k-uhd-lg-50ut8050-thinq-ai/p/MLB37330768',
                 'preco': '2.199,00'
             }
         ]
@@ -84,24 +84,23 @@ def gerar_copy_gemini(produto):
     else:
         copy_padrao += "\n"
     
-    copy_padrao += f"⚡ Aproveite antes que acabe!\n👉 {link}"
+    copy_padrao += f"⚡ Aproveite antes que acabe!\n{link}"
 
     if not GEMINI_API_KEY:
         return copy_padrao
 
     url_gemini = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
     
-    prompt = f"""Crie uma mensagem curta, persuasiva e vendedora para o WhatsApp sobre a seguinte oferta do Mercado Livre.
+    prompt = f"""Crie uma mensagem curta e vendedora para o WhatsApp sobre a seguinte oferta do Mercado Livre.
 Produto: {titulo}
 {f'Preço: R$ {preco}' if preco else ''}
 Link: {link}
 
 Regras:
-1. Use emojis atrativos no início das frases.
+1. Use emojis no início.
 2. Destaque o nome do produto e o preço.
-3. Inclua uma chamada para ação clara incentivando a compra.
-4. Mantenha o link exatamente como fornecido: {link}
-5. Retorne APENAS o texto formatado para o WhatsApp sem aspas."""
+3. Inclua o link exatamente como fornecido ao final da mensagem: {link}
+4. Retorne APENAS o texto formatado para o WhatsApp."""
 
     payload = {
         "contents": [{
@@ -119,14 +118,14 @@ Regras:
             print("✨ Legenda gerada com sucesso via Gemini AI!", flush=True)
             return text.strip()
         else:
-            print(f"⚠️ Aviso na API Gemini (Status {response.status_code}): {response.text}", flush=True)
+            print(f"⚠️ Aviso na API Gemini (Status {response.status_code}). Usando copy padrão...", flush=True)
             return copy_padrao
     except Exception as e:
-        print(f"⚠️ Erro de conexão com o Gemini: {e}. A usar copy padrão...", flush=True)
+        print(f"⚠️ Erro de conexão com o Gemini: {e}. Usando copy padrão...", flush=True)
         return copy_padrao
 
 
-# ==================== 3. ENVIAR MENSAGEM VIA EVOLUTION API ====================
+# ==================== 3. ENVIAR MENSAGEM COM LINK PREVIEW ====================
 def enviar_mensagem_whatsapp(texto):
     url = f"{EVOLUTION_URL}/message/sendText/{INSTANCE_NAME}"
     headers = {
@@ -135,15 +134,16 @@ def enviar_mensagem_whatsapp(texto):
     }
     payload = {
         "number": GROUP_JID,
-        "text": texto
+        "text": texto,
+        "linkPreview": True  # Activa o cartão com preview/imagem do Mercado Livre
     }
 
     try:
-        print("🚀 A enviar mensagem via Evolution API...", flush=True)
+        print("🚀 A enviar mensagem com Link Preview via Evolution API...", flush=True)
         response = requests.post(url, json=payload, headers=headers, timeout=15)
         print(f"📩 Resposta Evolution API: Status {response.status_code}", flush=True)
         if response.status_code in [200, 201]:
-            print("✅ Oferta enviada com sucesso para o grupo de WhatsApp!", flush=True)
+            print("✅ Oferta enviada com sucesso com cartão de pré-visualização!", flush=True)
             return True
     except Exception as e:
         print(f"❌ Erro ao enviar mensagem no WhatsApp: {e}", flush=True)
