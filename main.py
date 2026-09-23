@@ -18,10 +18,14 @@ PRODUTOS_ENVIADOS = set()
 
 # ================= 1. BUSCAR OFERTAS VIA API =================
 def buscar_ofertas_mercadolivre():
-    # Consulta produtos em promoção/oferta em destaque no Brasil (MLB)
     url = "https://api.mercadolibre.com/sites/MLB/search?q=ofertas&limit=10"
+    
+    # Cabeçalhos completos para evitar o bloqueio HTTP 403
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Referer": "https://www.mercadolivre.com.br/"
     }
     
     print("📡 A consultar produtos via API do Mercado Livre...", flush=True)
@@ -62,7 +66,7 @@ def buscar_ofertas_mercadolivre():
                 "preco_antigo": preco_antigo,
                 "desconto": desconto
             })
-        except Exception as e:
+        except Exception:
             continue
 
     print(f"✅ Total de ofertas extraídas com sucesso: {len(ofertas)}", flush=True)
