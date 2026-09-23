@@ -2,7 +2,6 @@ import os
 import time
 import requests
 import xml.etree.ElementTree as ET
-import google.generativeai as genai
 from apscheduler.schedulers.blocking import BlockingScheduler
 
 # ================= CONFIGURAÇÕES =================
@@ -11,18 +10,17 @@ EVOLUTION_APIKEY = "429683C4C977415CAAFCCE10F7D57E11"
 INSTANCE_NAME = "EnjoyWeb"
 
 GROUP_JID = "120363408931437070@g.us"
+# Substitua abaixo pela sua API Key válida do Google AI Studio se desejar
 GEMINI_API_KEY = "AQ.Ab8RN6JUq7JZfzkLEj82SE8vBkNlaAkrYF-boFIDVlLwPk1CuA"
 TAG_AFILIADO = "julianodossssoika"
 
-genai.configure(api_key=GEMINI_API_KEY)
 PRODUTOS_ENVIADOS = set()
 
-# ================= 1. BUSCAR OFERTAS (SEM DEPENDER DA API RESTRITA) =================
+# ================= 1. BUSCAR OFERTAS =================
 def buscar_ofertas_mercadolivre():
     print("📡 A consultar ofertas ativas...", flush=True)
     ofertas = []
 
-    # Métodos alternativos de consulta de ofertas
     urls_rss = [
         "https://lista.mercadolivre.com.br/rss/ofertas",
         "https://www.mercadolivre.com.br/ofertas/rss"
@@ -32,7 +30,6 @@ def buscar_ofertas_mercadolivre():
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
     }
 
-    # Tentativa via RSS/XML
     for url in urls_rss:
         try:
             res = requests.get(url, headers=headers, timeout=10)
@@ -56,7 +53,6 @@ def buscar_ofertas_mercadolivre():
         except Exception:
             continue
 
-    # Fallback: Ofertas Destaque Pré-carregadas para garantir execução diária permanente
     if not ofertas:
         print("⚠️ Utilizando lista garantida de ofertas populares...", flush=True)
         ofertas_destaque = [
@@ -70,30 +66,36 @@ def buscar_ofertas_mercadolivre():
     print(f"✅ Total de produtos extraídos com sucesso: {len(ofertas)}", flush=True)
     return ofertas
 
-# ================= 2. GERAR COPY COM GEMINI =================
+# ================= 2. GERAR COPY COM GEMINI (COM FALLBACK SEGURO) =================
 def criar_copy_gemini(produto):
-    print(f"🤖 A gerar copy persuasiva via Gemini para: {produto['titulo']}...", flush=True)
-    prompt = f"""
-    És um especialista em marketing de afiliados para grupos de promoções no WhatsApp.
-    Cria uma mensagem curta, chamativa e altamente persuasiva para o produto abaixo.
-
-    Produto: {produto['titulo']}
-    Preço Antigo: {f'R$ {produto["preco_antigo"]}' if produto['preco_antigo'] else ''}
-    Preço Promocional: R$ {produto['preco_novo']}
-    Desconto: {produto['desconto']}
-    Link de compra: {produto['link']}
-
-    Regras OBRIGATÓRIAS:
-    - Usa emojis chamativos no início (ex: 🚨, 🔥, ⚡).
-    - Destaque o valor da economia/desconto.
-    - Cria um senso de urgência leve.
-    - Mantém o texto limpo, sem exageros de caracteres.
-    - Na última linha, inclui APENAS o link de compra fornecido.
-    """
+    print(f"🤖 A gerar copy para: {produto['titulo']}...", flush=True)
     
-    model = genai.GenerativeModel('gemini-1.5-flash')
-    response = model.generate_content(prompt)
-    return response.text
+    prompt = f"Cria uma mensagem curta de promoção para WhatsApp:\nProduto: {produto['titulo']}\nPreço: R$ {produto['preco_novo']}\nLink: {produto['link']}"
+    
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}]
+    }
+    
+    try:
+        res = requests.post(url, json=payload, timeout=10)
+        if res.status_code == 200:
+            data = res.json()
+            return data["candidates"][0]["content"]["parts"][0]["text"]
+        else:
+            print(f"⚠️ Aviso na API Gemini (Status {res.status_code}). A usar modelo de copy padrão...", flush=True)
+    except Exception as e:
+        print(f"⚠️ Erro ao conectar ao Gemini: {e}. A usar modelo padrão...", flush=True)
+
+    # Template fallback caso a API key do Gemini falhe
+    copy_padrao = (
+        f"🚨 *PROMOÇÃO IMPERDÍVEL!* 🚨\n\n"
+        f"📦 *{produto['titulo']}*\n"
+        f"💥 Por apenas: *R$ {produto['preco_novo']}*\n\n"
+        f"⚡ Aproveite antes que acabe!\n"
+        f"👉 {produto['link']}"
+    )
+    return copy_padrao
 
 # ================= 3. ENVIAR PARA A EVOLUTION API =================
 def enviar_whatsapp(texto_mensagem):
