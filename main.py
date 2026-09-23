@@ -1,187 +1,164 @@
 import os
-import time
+import random
+import re
 import requests
-import xml.etree.ElementTree as ET
-from apscheduler.schedulers.blocking import BlockingScheduler
+import feedparser
+from telegram import Update
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
-# ==================== CONFIGURAÇÕES ====================
-EVOLUTION_URL = "https://evolution.mxbr.com.br"
-EVOLUTION_APIKEY = "429683C4C977415CAAFCCE10F7D57E11"
-INSTANCE_NAME = "EnjoyWeb"
+# ==========================================
+# CONFIGURAÇÕES E VARIÁVEIS DE AMBIENTE
+# ==========================================
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-GROUP_JID = "120363408931437070@g.us"
+# ==========================================
+# LISTA DE OFERTAS GARANTIDAS (FALLBACK)
+# ==========================================
+# URLs formatadas para busca direta para evitar erro de "Página Inexistente" (/p/MLB...)
+OFERTAS_FALLBACK = [
+    {
+        'titulo': 'Smartphone Samsung Galaxy A54 5G 128GB',
+        'link': 'https://lista.mercadolivre.com.br/samsung-galaxy-a54',
+        'preco': '1.699,00'
+    },
+    {
+        'titulo': 'Fone de Ouvido Bluetooth JBL Wave Flex',
+        'link': 'https://lista.mercadolivre.com.br/jbl-wave-flex',
+        'preco': '249,00'
+    },
+    {
+        'titulo': 'Smart TV 50" 4K UHD LED LG',
+        'link': 'https://lista.mercadolivre.com.br/smart-tv-50-4k-lg',
+        'preco': '2.199,00'
+    },
+    {
+        'titulo': 'Console PlayStation 5 Slim Edição Digital',
+        'link': 'https://lista.mercadolivre.com.br/playstation-5-slim',
+        'preco': '3.499,00'
+    },
+    {
+        'titulo': 'Fritadeira Elétrica Airfryer Mondial 4L',
+        'link': 'https://lista.mercadolivre.com.br/airfryer-mondial-4l',
+        'preco': '279,00'
+    }
+]
 
-# Sua API Key do Gemini (AI Studio / GCP)
-GEMINI_API_KEY = "AIzaSyBaqIS0hRVNkzqz93_XEloarm43Yjxj_pI"
-TAG_AFILIADO = "julianodosssoika"
+# ==========================================
+# FUNÇÃO PARA GERAR TEXTO COM GEMINI
+# ==========================================
+def gerar_legenda_gemini(titulo: str, preco: str, link: str) -> str:
+    """Gera uma legenda persuasiva usando a API REST do Gemini."""
+    if not GEMINI_API_KEY:
+        return f"🔥 **OFERTA IMPERDÍVEL!**\n\n📌 **{titulo}**\n💰 Por apenas: R$ {preco}\n\n🛒 Compre aqui: {link}"
 
-PRODUTOS_ENVIADOS = set()
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+    prompt = (
+        f"Escreva uma mensagem promocional curta, entusiasmada e persuasiva para o Telegram sobre este produto:\n"
+        f"Produto: {titulo}\n"
+        f"Preço: R$ {preco}\n"
+        f"Link: {link}\n\n"
+        f"Use emojis, destaque o preço e coloque o link de compra claramente no final."
+    )
+    
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}]
+    }
+    
+    try:
+        response = requests.post(url, json=payload, timeout=10)
+        if response.status_code == 200:
+            dados = response.json()
+            texto = dados['candidates'][0]['content']['parts'][0]['text']
+            return texto
+        else:
+            print(f"⚠️ Erro no Gemini API (Status {response.status_code}). Utilizando texto padrão.")
+    except Exception as e:
+        print(f"⚠️ Falha ao conectar ao Gemini: {e}")
 
+    # Mensagem padrão caso a API do Gemini falhe
+    return (
+        f"🔥 **SUPER OFERTA NO MERCADO LIVRE!**\n\n"
+        f"📦 **{titulo}**\n"
+        f"💵 **Preço Especial:** R$ {preco}\n\n"
+        f"🔗 **Ganta o seu antes que acabe:**\n{link}"
+    )
 
-# ==================== 1. BUSCAR OFERTAS ====================
-def buscar_ofertas_mercadolivre():
-    print("🔎 A consultar ofertas ativas...", flush=True)
+# ==========================================
+# BUSCA DE OFERTAS (RSS OU FALLBACK)
+# ==========================================
+def obter_ofertas():
+    """Tenta buscar ofertas via RSS do Mercado Livre; usa fallback se falhar."""
+    rss_url = "https://noticias.mercadolivre.com.br/feed/"
     ofertas = []
+    
+    try:
+        feed = feedparser.parse(rss_url)
+        for entry in feed.entries[:10]:
+            # Tenta extrair o preço do título se presente
+            preco_match = re.search(r'R\$\s?([\d\.,]+)', entry.title)
+            preco = preco_match.group(1) if preco_match else "Confira no site"
+            
+            ofertas.append({
+                'titulo': entry.title,
+                'link': entry.link,
+                'preco': preco
+            })
+    except Exception as e:
+        print(f"⚠️ Erro ao ler Feed RSS: {e}")
 
-    urls_rss = [
-        "https://lista.mercadolivre.com.br/rss/ofertas",
-        "https://www.mercadolivre.com.br/ofertas/rss"
-    ]
-
-    for url in urls_rss:
-        try:
-            response = requests.get(url, timeout=10)
-            if response.status_code == 200:
-                root = ET.fromstring(response.content)
-                for item in root.findall('./channel/item'):
-                    title = item.find('title').text if item.find('title') is not None else ""
-                    link = item.find('link').text if item.find('link') is not None else ""
-                    
-                    if title and link:
-                        # Limpa parâmetros extras e mantém a URL do produto intacta
-                        link_limpo = link.split('?')[0].split('#')[0]
-                        ofertas.append({
-                            'titulo': title,
-                            'link': link_limpo
-                        })
-        except Exception as e:
-            print(f"⚠️ Erro ao procurar no RSS ({url}): {e}", flush=True)
-
-    # Se o RSS estiver indisponível, utiliza lista de segurança
     if not ofertas:
         print("⚠️ Utilizando lista garantida de ofertas populares...", flush=True)
-        ofertas = [
-            {
-                'titulo': 'Smartphone Samsung Galaxy A54 5G 128GB',
-                'link': 'https://www.mercadolivre.com.br/p/MLB22485303',
-                'preco': '1.699,00'
-            },
-            {
-                'titulo': 'Fone de Ouvido Bluetooth JBL Wave Flex',
-                'link': 'https://www.mercadolivre.com.br/p/MLB22912019',
-                'preco': '249,00'
-            }
-        ]
+        ofertas = OFERTAS_FALLBACK
 
     return ofertas
 
-
-# ==================== 2. GERAR COPY COM GEMINI ====================
-def gerar_copy_gemini(produto):
-    titulo = produto.get('titulo', '')
-    preco = produto.get('preco', '')
-    link = produto.get('link', '')
-
-    # Modelo de texto padrão (Fallback)
-    copy_padrao = (
-        f"🚨 *PROMOÇÃO IMPERDÍVEL!* 🚨\n\n"
-        f"📦 *{titulo}*\n"
+# ==========================================
+# COMANDOS DO TELEGRAM
+# ==========================================
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Comando /start"""
+    await update.message.reply_text(
+        "👋 Olá! Eu sou o Bot de Ofertas do Mercado Livre.\n\n"
+        "Comandos disponíveis:\n"
+        "/oferta - Envia uma oferta promocional agora."
     )
-    if preco:
-        copy_padrao += f"💰 *Por apenas: R$ {preco}*\n\n"
-    else:
-        copy_padrao += "\n"
-    
-    copy_padrao += f"⚡ Aproveite antes que acabe!\n👉 {link}"
 
-    if not GEMINI_API_KEY:
-        return copy_padrao
+async def enviar_oferta(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Comando /oferta"""
+    ofertas = obter_ofertas()
+    oferta_escolhida = random.choice(ofertas)
 
-    url_gemini = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
-    
-    prompt = f"""Crie uma mensagem curta, persuasiva e vendedora para o WhatsApp sobre a seguinte oferta do Mercado Livre.
-Produto: {titulo}
-{f'Preço: R$ {preco}' if preco else ''}
-Link: {link}
+    # Gera a mensagem persuasiva
+    mensagem = gerar_legenda_gemini(
+        titulo=oferta_escolhida['titulo'],
+        preco=oferta_escolhida['preco'],
+        link=oferta_escolhida['link']
+    )
 
-Regras:
-1. Use emojis atrativos no início das frases.
-2. Destaque o nome do produto e o preço (se fornecido).
-3. Inclua uma chamada para ação clara incentivando a compra.
-4. Mantenha o link exatamente como fornecido: {link}
-5. Retorne APENAS o texto formatado para o WhatsApp."""
+    await update.message.reply_text(
+        text=mensagem,
+        parse_mode="Markdown",
+        disable_web_page_preview=False
+    )
 
-    payload = {
-        "contents": [{
-            "parts": [{"text": prompt}]
-        }]
-    }
+# ==========================================
+# INICIALIZAÇÃO DO BOT
+# ==========================================
+def main():
+    if not TELEGRAM_BOT_TOKEN:
+        raise ValueError("❌ A variável de ambiente TELEGRAM_BOT_TOKEN não foi definida!")
 
-    headers = {"Content-Type": "application/json"}
+    print("🚀 Bot iniciado com sucesso! Aguardando comandos...", flush=True)
 
-    try:
-        response = requests.post(url_gemini, json=payload, headers=headers, timeout=15)
-        if response.status_code == 200:
-            res_data = response.json()
-            text = res_data['candidates'][0]['content']['parts'][0]['text']
-            return text.strip()
-        else:
-            print(f"⚠️ Aviso na API Gemini (Status {response.status_code}). A usar modelo de copy padrão...", flush=True)
-            return copy_padrao
-    except Exception as e:
-        print(f"⚠️ Erro de conexão com o Gemini: {e}. A usar copy padrão...", flush=True)
-        return copy_padrao
+    app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
 
+    # Registra os manipuladores de comandos
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("oferta", enviar_oferta))
 
-# ==================== 3. ENVIAR MENSAGEM VIA EVOLUTION API ====================
-def enviar_mensagem_whatsapp(texto):
-    url = f"{EVOLUTION_URL}/message/sendText/{INSTANCE_NAME}"
-    headers = {
-        "apikey": EVOLUTION_APIKEY,
-        "Content-Type": "application/json"
-    }
-    payload = {
-        "number": GROUP_JID,
-        "text": texto
-    }
+    # Inicia o Bot
+    app.run_polling()
 
-    try:
-        print("🚀 A enviar mensagem via Evolution API...", flush=True)
-        response = requests.post(url, json=payload, headers=headers, timeout=15)
-        print(f"📩 Resposta Evolution API: Status {response.status_code} - {response.text}", flush=True)
-        if response.status_code in [200, 201]:
-            print("✅ Oferta enviada com sucesso para o grupo de WhatsApp!", flush=True)
-            return True
-    except Exception as e:
-        print(f"❌ Erro ao enviar mensagem no WhatsApp: {e}", flush=True)
-    return False
-
-
-# ==================== 4. AGENTE DE OFERTAS ====================
-def executar_agente_ofertas():
-    print("\n🔎 Agente a procurar novas ofertas no Mercado Livre...", flush=True)
-    ofertas = buscar_ofertas_mercadolivre()
-    
-    print(f"✅ Total de produtos extraídos com sucesso: {len(ofertas)}", flush=True)
-
-    for produto in ofertas:
-        link = produto['link']
-        if link not in PRODUTOS_ENVIADOS:
-            print(f"📦 Nova oferta selecionada: {produto['titulo']}", flush=True)
-            print(f"🤖 A gerar copy para: {produto['titulo']}...", flush=True)
-            
-            mensagem = gerar_copy_gemini(produto)
-            sucesso = enviar_mensagem_whatsapp(mensagem)
-
-            if sucesso:
-                PRODUTOS_ENVIADOS.add(link)
-                break  # Envia uma oferta por ciclo
-            else:
-                print("⚠️ Falha ao enviar oferta. Tentando no próximo ciclo.", flush=True)
-
-
-# ==================== INICIALIZAÇÃO ====================
 if __name__ == "__main__":
-    print("🚀 Agente de ofertas iniciado!", flush=True)
-    
-    # Executa a primeira vez imediatamente
-    executar_agente_ofertas()
-
-    # Agenda a execução a cada 30 minutos
-    scheduler = BlockingScheduler()
-    scheduler.add_job(executar_agente_ofertas, 'interval', minutes=30)
-
-    try:
-        scheduler.start()
-    except (KeyboardInterrupt, SystemExit):
-        print("🛑 Agente de ofertas parado com sucesso.", flush=True)
+    main()
