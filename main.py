@@ -1,7 +1,6 @@
 import os
 import time
 import requests
-from bs4 import BeautifulSoup
 import google.generativeai as genai
 from apscheduler.schedulers.blocking import BlockingScheduler
 
@@ -17,50 +16,52 @@ TAG_AFILIADO = "julianodossssoika"
 genai.configure(api_key=GEMINI_API_KEY)
 PRODUTOS_ENVIADOS = set()
 
-# ================= 1. BUSCAR OFERTAS =================
+# ================= 1. BUSCAR OFERTAS VIA API =================
 def buscar_ofertas_mercadolivre():
-    url = "https://www.mercadolivre.com.br/ofertas"
+    # Consulta produtos em promoção/oferta em destaque no Brasil (MLB)
+    url = "https://api.mercadolibre.com/sites/MLB/search?q=ofertas&limit=10"
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
     }
     
-    print("📡 A fazer requisição à página do Mercado Livre...", flush=True)
+    print("📡 A consultar produtos via API do Mercado Livre...", flush=True)
     response = requests.get(url, headers=headers)
     
     if response.status_code != 200:
-        print(f"❌ Erro HTTP {response.status_code} ao aceder às ofertas", flush=True)
+        print(f"❌ Erro HTTP {response.status_code} na API do Mercado Livre", flush=True)
         return []
 
-    soup = BeautifulSoup(response.text, "html.parser")
-    
-    # Busca por links de produtos de forma mais ampla
-    cards = soup.select(".promotion-item") or soup.select(".ui-search-result") or soup.find_all("li", class_="promotion-item")
-    print(f"🔍 Elementos de promoção encontrados na página: {len(cards)}", flush=True)
+    data = response.json()
+    results = data.get("results", [])
+    print(f"🔍 Produtos retornados pela API: {len(results)}", flush=True)
     
     ofertas = []
 
-    for card in cards:
+    for item in results:
         try:
-            titulo_elem = card.select_one(".promotion-item__title") or card.select_one(".ui-search-item__title")
-            link_elem = card.select_one("a.promotion-item__link-link") or card.select_one("a.ui-search-link")
-            preco_novo_elem = card.select_one(".promotion-item__price span") or card.select_one(".price-tag-fraction")
-            preco_antigo_elem = card.select_one(".promotion-item__old-price")
-            desconto_elem = card.select_one(".promotion-item__discount")
+            titulo = item.get("title")
+            link_original = item.get("permalink")
+            preco_novo = str(item.get("price"))
+            preco_antigo = str(item.get("original_price")) if item.get("original_price") else ""
+            
+            # Adiciona a tag de afiliado ao link
+            if "?" in link_original:
+                link_afiliado = f"{link_original}&matt_tool=1234567&matt_word={TAG_AFILIADO}"
+            else:
+                link_afiliado = f"{link_original}?matt_tool=1234567&matt_word={TAG_AFILIADO}"
 
-            if titulo_elem and link_elem and preco_novo_elem:
-                titulo = titulo_elem.text.strip()
-                link_original = link_elem["href"].split("#")[0]
-                preco_novo = preco_novo_elem.text.strip()
-                preco_antigo = preco_antigo_elem.text.strip() if preco_antigo_elem else ""
-                desconto = desconto_elem.text.strip() if desconto_elem else ""
+            desconto = ""
+            if preco_antigo and float(preco_antigo) > float(preco_novo):
+                pct = int(((float(preco_antigo) - float(preco_novo)) / float(preco_antigo)) * 100)
+                desconto = f"{pct}% OFF"
 
-                ofertas.append({
-                    "titulo": titulo,
-                    "link": link_original,
-                    "preco_novo": preco_novo,
-                    "preco_antigo": preco_antigo,
-                    "desconto": desconto
-                })
+            ofertas.append({
+                "titulo": titulo,
+                "link": link_afiliado,
+                "preco_novo": preco_novo,
+                "preco_antigo": preco_antigo,
+                "desconto": desconto
+            })
         except Exception as e:
             continue
 
@@ -75,17 +76,17 @@ def criar_copy_gemini(produto):
     Cria uma mensagem curta, chamativa e altamente persuasiva para o produto abaixo.
 
     Produto: {produto['titulo']}
-    Preço Antigo: {produto['preco_antigo']}
+    Preço Antigo: {f'R$ {produto["preco_antigo"]}' if produto['preco_antigo'] else ''}
     Preço Promocional: R$ {produto['preco_novo']}
     Desconto: {produto['desconto']}
-    Link original: {produto['link']}
+    Link de compra: {produto['link']}
 
     Regras OBRIGATÓRIAS:
     - Usa emojis chamativos no início (ex: 🚨, 🔥, ⚡).
     - Destaque o valor da economia/desconto.
     - Cria um senso de urgência leve.
     - Mantém o texto limpo, sem exageros de caracteres.
-    - Na última linha, inclui o link do produto.
+    - Na última linha, inclui APENAS o link de compra fornecido.
     """
     
     model = genai.GenerativeModel('gemini-1.5-flash')
@@ -141,7 +142,6 @@ def rodar_agente():
 if __name__ == "__main__":
     print("🚀 Agente de ofertas iniciado!", flush=True)
     
-    # Executa imediatamente no arranque
     rodar_agente()
     
     scheduler = BlockingScheduler()
