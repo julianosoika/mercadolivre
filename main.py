@@ -37,7 +37,6 @@ def buscar_ofertas_mercadolivre():
                     link = item.find('link').text if item.find('link') is not None else ""
                     
                     if title and link:
-                        # Limpa parâmetros extras que causam erro 404
                         link_limpo = link.split('?')[0].split('#')[0]
                         ofertas.append({
                             'titulo': title,
@@ -46,7 +45,7 @@ def buscar_ofertas_mercadolivre():
         except Exception as e:
             print(f"⚠️ Erro ao procurar no RSS ({url}): {e}", flush=True)
 
-    # Se o RSS falhar, utiliza URLs diretas de busca (nunca dão erro 404)
+    # Se o RSS falhar, utiliza URLs de busca funcionais
     if not ofertas:
         print("⚠️ Utilizando lista garantida de ofertas populares...", flush=True)
         ofertas = [
@@ -76,7 +75,6 @@ def gerar_copy_gemini(produto):
     preco = produto.get('preco', '')
     link = produto.get('link', '')
 
-    # Modelo de texto padrão (Fallback)
     copy_padrao = (
         f"🚨 *PROMOÇÃO IMPERDÍVEL!* 🚨\n\n"
         f"📦 *{titulo}*\n"
@@ -100,10 +98,10 @@ Link: {link}
 
 Regras:
 1. Use emojis atrativos no início das frases.
-2. Destaque o nome do produto e o preço (se fornecido).
+2. Destaque o nome do produto e o preço.
 3. Inclua uma chamada para ação clara incentivando a compra.
 4. Mantenha o link exatamente como fornecido: {link}
-5. Retorne APENAS o texto formatado para o WhatsApp."""
+5. Retorne APENAS o texto formatado para o WhatsApp sem aspas."""
 
     payload = {
         "contents": [{
@@ -118,9 +116,10 @@ Regras:
         if response.status_code == 200:
             res_data = response.json()
             text = res_data['candidates'][0]['content']['parts'][0]['text']
+            print("✨ Legenda gerada com sucesso via Gemini AI!", flush=True)
             return text.strip()
         else:
-            print(f"⚠️ Aviso na API Gemini (Status {response.status_code}). A usar modelo de copy padrão...", flush=True)
+            print(f"⚠️ Aviso na API Gemini (Status {response.status_code}): {response.text}", flush=True)
             return copy_padrao
     except Exception as e:
         print(f"⚠️ Erro de conexão com o Gemini: {e}. A usar copy padrão...", flush=True)
@@ -142,7 +141,7 @@ def enviar_mensagem_whatsapp(texto):
     try:
         print("🚀 A enviar mensagem via Evolution API...", flush=True)
         response = requests.post(url, json=payload, headers=headers, timeout=15)
-        print(f"📩 Resposta Evolution API: Status {response.status_code} - {response.text}", flush=True)
+        print(f"📩 Resposta Evolution API: Status {response.status_code}", flush=True)
         if response.status_code in [200, 201]:
             print("✅ Oferta enviada com sucesso para o grupo de WhatsApp!", flush=True)
             return True
@@ -156,7 +155,7 @@ def executar_agente_ofertas():
     print("\n🔎 Agente a procurar novas ofertas no Mercado Livre...", flush=True)
     ofertas = buscar_ofertas_mercadolivre()
     
-    print(f"✅ Total de produtos extraídos com sucesso: {len(ofertas)}", flush=True)
+    print(f"✅ Total de produtos extraídos: {len(ofertas)}", flush=True)
 
     for produto in ofertas:
         link = produto['link']
@@ -169,7 +168,7 @@ def executar_agente_ofertas():
 
             if sucesso:
                 PRODUTOS_ENVIADOS.add(link)
-                break  # Envia uma oferta por ciclo
+                break
             else:
                 print("⚠️ Falha ao enviar oferta. Tentando no próximo ciclo.", flush=True)
 
@@ -178,14 +177,12 @@ def executar_agente_ofertas():
 if __name__ == "__main__":
     print("🚀 Agente de ofertas iniciado!", flush=True)
     
-    # Executa a primeira vez imediatamente
     executar_agente_ofertas()
 
-    # Agenda a execução a cada 30 minutos
     scheduler = BlockingScheduler()
     scheduler.add_job(executar_agente_ofertas, 'interval', minutes=30)
 
     try:
         scheduler.start()
     except (KeyboardInterrupt, SystemExit):
-        print("🛑 Agente de ofertas parado com sucesso.", flush=True)
+        print("🛑 Agente de ofertas parado.", flush=True)
