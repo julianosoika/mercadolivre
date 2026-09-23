@@ -11,7 +11,7 @@ INSTANCE_NAME = "EnjoyWeb"
 
 GROUP_JID = "120363408931437070@g.us"
 # Substitua abaixo pela sua API Key válida do Google AI Studio se desejar
-GEMINI_API_KEY = "AQ.Ab8RN6JUq7JZfzkLEj82SE8vBkNlaAkrYF-boFIDVlLwPk1CuA"
+GEMINI_API_KEY = "AIzaSyBaqIS0hRVNkzqz93_XEloarm43Yjxj_pI"
 TAG_AFILIADO = "julianodossssoika"
 
 PRODUTOS_ENVIADOS = set()
