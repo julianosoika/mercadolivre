@@ -1,7 +1,6 @@
 import os
 import time
 import requests
-import xml.etree.ElementTree as ET
 import google.generativeai as genai
 from apscheduler.schedulers.blocking import BlockingScheduler
 
@@ -17,61 +16,58 @@ TAG_AFILIADO = "julianodossssoika"
 genai.configure(api_key=GEMINI_API_KEY)
 PRODUTOS_ENVIADOS = set()
 
-# ================= 1. BUSCAR OFERTAS (MÉTODO ANTI-BLOQUEIO) =================
+# ================= 1. BUSCAR OFERTAS DE TERMOS POPULARES =================
 def buscar_ofertas_mercadolivre():
-    # URL do feed de ofertas ou busca direta com cabeçalhos rotativos
-    url = "https://lista.mercadolivre.com.br/ofertas_DisplayType_G"
-    
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-        "Accept-Language": "pt-BR,pt;q=0.9",
-        "Cache-Control": "max-age=0"
-    }
-    
-    print("📡 A consultar produtos no Mercado Livre...", flush=True)
-    
-    try:
-        # Tenta a busca simplificada na API móvel (não bloqueia IPs de datacenter)
-        api_url = "https://api.mercadolibre.com/sites/MLB/search?category=MLB1051&limit=15"
-        res_api = requests.get(api_url, headers={"User-Agent": "MercadoPago/2.0.0"})
-        
-        if res_api.status_code == 200:
-            data = res_api.json()
-            results = data.get("results", [])
-            print(f"🔍 Produtos encontrados via API Móvel: {len(results)}", flush=True)
+    # Lista de termos populares com muitas ofertas e descontos no Mercado Livre
+    termos = ["smartphone", "notebook", "fone bluetooth", "tv 4k", "air fryer", "smartwatch"]
+    ofertas = []
+
+    print("📡 A pesquisar ofertas ativas no Mercado Livre...", flush=True)
+
+    for termo in termos:
+        try:
+            url = f"https://api.mercadolibre.com/sites/MLB/search?q={termo}&limit=5"
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            }
             
-            ofertas = []
-            for item in results:
-                titulo = item.get("title")
-                link_original = item.get("permalink")
-                preco_novo = str(item.get("price"))
-                preco_antigo = str(item.get("original_price")) if item.get("original_price") else ""
+            res = requests.get(url, headers=headers)
+            if res.status_code == 200:
+                data = res.json()
+                results = data.get("results", [])
                 
-                if "?" in link_original:
-                    link_afiliado = f"{link_original}&matt_tool=1234567&matt_word={TAG_AFILIADO}"
-                else:
-                    link_afiliado = f"{link_original}?matt_tool=1234567&matt_word={TAG_AFILIADO}"
+                for item in results:
+                    titulo = item.get("title")
+                    link_original = item.get("permalink")
+                    preco_novo = str(item.get("price"))
+                    preco_antigo = str(item.get("original_price")) if item.get("original_price") else ""
+                    
+                    if not titulo or not link_original:
+                        continue
 
-                desconto = ""
-                if preco_antigo and float(preco_antigo) > float(preco_novo):
-                    pct = int(((float(preco_antigo) - float(preco_novo)) / float(preco_antigo)) * 100)
-                    desconto = f"{pct}% OFF"
+                    # Adiciona a tag de afiliado ao link
+                    if "?" in link_original:
+                        link_afiliado = f"{link_original}&matt_tool=1234567&matt_word={TAG_AFILIADO}"
+                    else:
+                        link_afiliado = f"{link_original}?matt_tool=1234567&matt_word={TAG_AFILIADO}"
 
-                ofertas.append({
-                    "titulo": titulo,
-                    "link": link_afiliado,
-                    "preco_novo": preco_novo,
-                    "preco_antigo": preco_antigo,
-                    "desconto": desconto
-                })
-            
-            return ofertas
+                    desconto = ""
+                    if preco_antigo and float(preco_antigo) > float(preco_novo):
+                        pct = int(((float(preco_antigo) - float(preco_novo)) / float(preco_antigo)) * 100)
+                        desconto = f"{pct}% OFF"
 
-    except Exception as e:
-        print(f"⚠️ Erro na consulta primária: {e}", flush=True)
-        
-    return []
+                    ofertas.append({
+                        "titulo": titulo,
+                        "link": link_afiliado,
+                        "preco_novo": preco_novo,
+                        "preco_antigo": preco_antigo,
+                        "desconto": desconto
+                    })
+        except Exception as e:
+            print(f"⚠️ Erro ao procurar termo '{termo}': {e}", flush=True)
+
+    print(f"✅ Total de produtos extraídos com sucesso: {len(ofertas)}", flush=True)
+    return ofertas
 
 # ================= 2. GERAR COPY COM GEMINI =================
 def criar_copy_gemini(produto):
@@ -88,7 +84,7 @@ def criar_copy_gemini(produto):
 
     Regras OBRIGATÓRIAS:
     - Usa emojis chamativos no início (ex: 🚨, 🔥, ⚡).
-    - Destaque o valor da economia/desconto.
+    - Destaque o valor da economia/desconto se houver.
     - Cria um senso de urgência leve.
     - Mantém o texto limpo, sem exageros de caracteres.
     - Na última linha, inclui APENAS o link de compra fornecido.
